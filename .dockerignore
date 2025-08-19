@@ -1,0 +1,37 @@
+# Entornos virtuales locales
+venv/
+.env
+.env.*
+
+# Archivos de base de datos locales
+*.db
+
+# Archivos de compilación/cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Configuración de editores/IDE
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git
+.gitignore
+
+# Pruebas y reportes
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Archivos temporales
+*.log
+*.tmp
+*.bak
+*.DS_Store
+
+# Metadata de setuptools
+*.egg-info/

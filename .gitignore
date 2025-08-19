@@ -1,0 +1,57 @@
+# ======================================
+# Python
+# ======================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.manifest
+*.spec
+
+# Virtualenv
+venv/
+ENV/
+env/
+.venv/
+
+# SQLite local (solo para dev)
+*.db
+
+# Logs y temporales
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.DS_Store
+*.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+
+# ======================================
+# Editor / IDE
+# ======================================
+.vscode/
+.idea/
+*.iml
+
+# ======================================
+# Docker
+# ======================================
+# Evitar que se mezclen archivos generados con docker-compose
+*.pid
+*.seed
+docker-compose.override.yml
+
+# ======================================
+# Env files
+# ======================================
+.env
+.env.*
