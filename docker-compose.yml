@@ -28,8 +28,6 @@ services:
         condition: service_healthy
     env_file:
       - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/library
     ports:
       - "8000:8000"
     restart: unless-stopped
