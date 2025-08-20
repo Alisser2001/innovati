@@ -1,10 +1,8 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, delete
-
 from app.models import (
     Book, BookCopy, EmailUser, Reservation,
     CopyStatus, ReservationStatus
@@ -68,13 +66,18 @@ async def register_book(session: AsyncSession, *, title: str, author: Optional[s
     session.add(b)
     await session.commit()
     await session.refresh(b)
-    return _ok("Libro registrado exitosamente.", book_id=b.id, title=b.title, author=b.author)
+    return _ok(
+        "Libro registrado exitosamente.",
+        book_id=b.id, title=b.title, author=b.author,
+        created_at=(b.created_at.isoformat() if getattr(b, "created_at", None) else None)
+    )
 
 async def register_copy(session: AsyncSession, *, book_id: str, barcode: str, location: str) -> Dict[str, Any]:
     if not (book_id and barcode and location):
         return _err("Faltan datos para registrar la copia (book_id, barcode, location).", code="MISSING_FIELDS")
     r = await session.execute(select(Book).where(Book.id == book_id))
-    if not r.scalar_one_or_none():
+    book = r.scalar_one_or_none()
+    if not book:
         return _err("El libro indicado no existe.", code="BOOK_NOT_FOUND")
     r2 = await session.execute(select(BookCopy).where(BookCopy.barcode == barcode))
     if r2.scalar_one_or_none():
@@ -83,7 +86,11 @@ async def register_copy(session: AsyncSession, *, book_id: str, barcode: str, lo
     session.add(c)
     await session.commit()
     await session.refresh(c)
-    return _ok("Copia registrada exitosamente.", copy_id=c.id, book_id=c.book_id, barcode=c.barcode, location=c.location)
+    return _ok(
+        "Copia registrada exitosamente.",
+        copy_id=c.id, book_id=c.book_id, title=book.title,
+        barcode=c.barcode, location=c.location
+    )
 
 async def reserve(session: AsyncSession, *, book_id: Optional[str], book_title: Optional[str], name: Optional[str], email: str) -> Dict[str, Any]:
     if not email:
@@ -109,8 +116,12 @@ async def reserve(session: AsyncSession, *, book_id: Optional[str], book_title: 
     await session.refresh(res)
     return _ok(
         "La reservación se realizó exitosamente.",
-        reservation_id=res.id, book_id=book.id, copy_id=copy.id,
-        user_email=user.email, due_date=res.due_date.isoformat()
+        reservation_id=res.id,
+        book_id=book.id, title=book.title,
+        copy_id=copy.id, barcode=copy.barcode, location=copy.location,
+        user_email=user.email,
+        due_date=res.due_date.isoformat(),
+        renewed_cnt=0
     )
 
 async def renew(session: AsyncSession, *, barcode: str, email: str) -> Dict[str, Any]:
@@ -137,11 +148,18 @@ async def renew(session: AsyncSession, *, barcode: str, email: str) -> Dict[str,
         return _err("La reservación ya está vencida, no se puede renovar.", code="RESERVATION_EXPIRED")
     reservation.due_date = reservation.due_date + timedelta(days=DEFAULT_LOAN_DAYS)
     reservation.renewed_cnt += 1
+    br = await session.execute(select(Book).where(Book.id == reservation.book_id))
+    book = br.scalar_one_or_none()
     await session.commit()
     await session.refresh(reservation)
     return _ok(
         "La reservación fue renovada exitosamente.",
-        reservation_id=reservation.id, due_date=reservation.due_date.isoformat()
+        reservation_id=reservation.id,
+        book_id=reservation.book_id, title=(book.title if book else None),
+        copy_id=reservation.copy_id, barcode=copy.barcode,
+        user_email=user.email,
+        due_date=reservation.due_date.isoformat(),
+        renewed_cnt=reservation.renewed_cnt
     )
 
 async def cancel(session: AsyncSession, *, barcode: str, email: str) -> Dict[str, Any]:
@@ -168,32 +186,38 @@ async def cancel(session: AsyncSession, *, barcode: str, email: str) -> Dict[str
     resv.canceled_at = datetime.utcnow()
     if copy.status != CopyStatus.AVAILABLE:
         copy.status = CopyStatus.AVAILABLE
+    br = await session.execute(select(Book).where(Book.id == resv.book_id))
+    book = br.scalar_one_or_none()
     await session.commit()
     await session.refresh(resv)
     return _ok(
         "La reservación fue cancelada exitosamente.",
-        reservation_id=resv.id
+        reservation_id=resv.id,
+        book_id=resv.book_id, title=(book.title if book else None),
+        copy_id=resv.copy_id, barcode=copy.barcode,
+        user_email=user.email,
+        canceled_at=(resv.canceled_at.isoformat() if resv.canceled_at else None)
     )
 
-async def delete_book(session: AsyncSession, *, book_id: str) -> Dict[str, Any]:
-    if not book_id:
-        return _err("Falta el id del libro.", code="MISSING_ID")
-    r_book = await session.execute(select(Book).where(Book.id == book_id))
-    book = r_book.scalar_one_or_none()
+async def delete_book(session: AsyncSession, *, book_id: Optional[str] = None, book_title: Optional[str] = None) -> Dict[str, Any]:
+    if not (book_id or book_title):
+        return _err("Falta el id o el título del libro.", code="MISSING_ID_OR_TITLE")
+    book = await _find_book_by_id_or_title(session, book_id, book_title)
     if not book:
         return _err("No encontré el libro solicitado.", code="BOOK_NOT_FOUND")
-    r_res_ids = await session.execute(
-        select(Reservation.id).where(
-            (Reservation.book_id == book_id)
-        )
-    )
+    title = book.title
+    r_res_ids = await session.execute(select(Reservation.id).where(Reservation.book_id == book.id))
     res_ids = [row[0] for row in r_res_ids]
     if res_ids:
         await session.execute(delete(Reservation).where(Reservation.id.in_(res_ids)))
-    r_copy_ids = await session.execute(select(BookCopy.id).where(BookCopy.book_id == book_id))
+    r_copy_ids = await session.execute(select(BookCopy.id).where(BookCopy.book_id == book.id))
     copy_ids = [row[0] for row in r_copy_ids]
     if copy_ids:
         await session.execute(delete(BookCopy).where(BookCopy.id.in_(copy_ids)))
-    await session.execute(delete(Book).where(Book.id == book_id))
+    await session.execute(delete(Book).where(Book.id == book.id))
     await session.commit()
-    return _ok("Libro eliminado exitosamente.", book_id=book_id, removed_copies=len(copy_ids), removed_reservations=len(res_ids))
+    return _ok(
+        "Libro eliminado exitosamente.",
+        book_id=book.id, title=title,
+        removed_copies=len(copy_ids), removed_reservations=len(res_ids)
+    )

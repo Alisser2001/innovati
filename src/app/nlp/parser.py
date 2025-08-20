@@ -27,6 +27,7 @@ Operaciones típicas (intent) con sus parámetros:
 - list_books()
 - register_book(title:string, author?:string)
 - register_copy(book_id:string, barcode:string, location:string)
+- delete_book(book_title?:string, book_id?:string)
 """
 
 INSTRUCTIONS = """
@@ -34,7 +35,7 @@ Eres un parser de intención para una API de biblioteca.
 Lee el asunto y el cuerpo del correo. Deduce la intención del usuario (intent) y los parámetros (params).
 Debes devolver un JSON **estricto** que cumpla con el siguiente esquema:
 
-- intent: uno de {reserve | renew | cancel | list_books | register_book | register_copy | unknown}
+- intent: uno de {reserve | renew | cancel | list_books | register_book | register_copy | delete_book | unknown}
 - params: objeto con campos adecuados para el intent
 - reserve: { "book_title"?:string, "book_id"?:string, "name":string, "email":string }
 - renew:   { "barcode":string, "email":string }
@@ -42,6 +43,7 @@ Debes devolver un JSON **estricto** que cumpla con el siguiente esquema:
 - list_books: {}
 - register_book:  { "title":string, "author"?:string }
 - register_copy:  { "book_id":string, "barcode":string, "location":string }
+- delete_book:    { "book_title"?:string, "book_id"?:string }
 - confidence: número entre 0 y 1
 - reason: texto corto justificando por qué crees esa intención
 - sql_like: una sola cadena con una *pseudoconsulta* SQL que describe la acción/consulta que harías
@@ -51,7 +53,7 @@ Responde **solo** el JSON final, sin texto extra, sin markdown, sin backticks.
 """
 
 class IntentPayload(BaseModel):
-    intent: Literal["reserve", "renew", "cancel", "list_books", "register_book", "register_copy", "unknown"] = Field(..., description="Intent detectado")
+    intent: Literal["reserve", "renew", "cancel", "list_books", "register_book", "register_copy", "delete_book", "unknown"] = Field(..., description="Intent detectado")
     params: Dict[str, Any] = Field(default_factory=dict, description="Parámetros necesarios para la operación")
     confidence: float = Field(ge=0, le=1, default=0.0, description="Confianza en la clasificación")
     reason: str = Field(default="", description="Breve justificación de la clasificación")

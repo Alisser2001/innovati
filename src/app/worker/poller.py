@@ -6,7 +6,7 @@ from app.email.client import GraphClient
 from app.nlp.parser import extract_intent_sql_like
 from app.db import SessionLocal
 from app.models import EmailLog
-from app.actions import list_books, register_book, register_copy, reserve, renew, cancel
+from app.actions import list_books, register_book, register_copy, reserve, renew, cancel, delete_book
 
 def _html_to_text(html: str | None) -> str:
     if not html:
@@ -15,53 +15,141 @@ def _html_to_text(html: str | None) -> str:
 
 def _friendly_reply(intent: str, params: dict, result: dict, processed_at_iso: str) -> str:
     success = result.get("ok", False)
-    detail = result.get("data") or {}
-    def who():
-        email = params.get("email") or detail.get("user_email")
-        name = params.get("name")
-        if name and email:
-            return f"{name} ({email})"
-        return email or name or "usuario"
-    def book_label():
-        return (
-            params.get("book_title")
-            or detail.get("title")
-            or params.get("title")
-            or "el libro solicitado"
-        )
-    def copy_label():
-        return params.get("barcode") or detail.get("barcode") or "la copia indicada"
+    data = result.get("data") or {}
+    code = result.get("code") or ""
+    def _val(k, alt=None): return data.get(k) or params.get(k) or alt
+    def _line_items(lines: list[str]) -> list[str]:
+        return [f"- {ln}" for ln in lines if ln]
+    def _header(txt: str) -> str:
+        return txt.strip()
+    lines: list[str] = ["¡Hola! 👋", ""]
     if intent == "reserve":
-        msg = "La reserva del libro solicitado se realizó exitosamente." if success \
-              else "No pudimos realizar la reserva porque no hay copias disponibles o el libro no existe."
+        if success:
+            lines.append(_header("✅ Reserva realizada con éxito."))
+            items = _line_items([
+                f"Libro: {_val('title', 'desconocido')} (ID: {_val('book_id','-')})",
+                f"Copia (barcode): {_val('barcode','-')}",
+                f"Ubicación: {_val('location','-')}",
+                f"Usuario: {_val('user_email','-')}",
+                f"Vencimiento: {_val('due_date','-')}",
+                f"Renovaciones: {_val('renewed_cnt', 0)}",
+                f"Id de reservación: {_val('reservation_id','-')}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "BOOK_NOT_FOUND": "No encontré el libro por id/título.",
+                "NO_AVAILABLE_COPIES": "No hay copias disponibles para ese libro.",
+                "MISSING_EMAIL": "Falta el correo del solicitante."
+            }.get(code, result.get("message") or "No pudimos realizar la reserva.")
+            lines.append(f"❌ {msg}")
     elif intent == "renew":
-        msg = "La reservación fue renovada exitosamente." if success \
-              else "No pudimos renovar la reservación. Verifica el código de barras y el correo."
+        if success:
+            lines.append(_header("🔁 Renovación exitosa."))
+            items = _line_items([
+                f"Copia (barcode): {_val('barcode','-')}",
+                f"Libro: {_val('title','-')} (ID: {_val('book_id','-')})",
+                f"Usuario: {_val('user_email','-')}",
+                f"Nuevo vencimiento: {_val('due_date','-')}",
+                f"Total de renovaciones: {_val('renewed_cnt','-')}",
+                f"Id de reservación: {_val('reservation_id','-')}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "MISSING_FIELDS": "Debes enviar barcode y email.",
+                "USER_NOT_FOUND": "No encontré al usuario.",
+                "COPY_NOT_FOUND": "No encontré la copia indicada.",
+                "ACTIVE_RESERVATION_NOT_FOUND": "No hay una reservación activa para esos datos.",
+                "RESERVATION_EXPIRED": "La reservación está vencida; no se puede renovar."
+            }.get(code, result.get("message") or "No pudimos renovar la reservación.")
+            lines.append(f"❌ {msg}")
     elif intent == "cancel":
-        msg = "La reservación fue cancelada exitosamente." if success \
-              else "No encontramos una reservación activa para cancelar con esos datos."
-    elif intent == "list_books":
-        msg = "Te envío el listado actualizado de libros." if success \
-              else "No fue posible obtener el listado en este momento."
+        if success:
+            lines.append(_header("🗑️ Reservación cancelada."))
+            items = _line_items([
+                f"Libro: {_val('title','-')} (ID: {_val('book_id','-')})",
+                f"Copia (barcode): {_val('barcode','-')}",
+                f"Usuario: {_val('user_email','-')}",
+                f"Cancelado en: {_val('canceled_at','-')}",
+                f"Id de reservación: {_val('reservation_id','-')}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "MISSING_FIELDS": "Debes enviar barcode y email.",
+                "USER_NOT_FOUND": "No encontré al usuario.",
+                "COPY_NOT_FOUND": "No encontré la copia indicada.",
+                "ACTIVE_RESERVATION_NOT_FOUND": "No hay una reservación activa para esos datos."
+            }.get(code, result.get("message") or "No pudimos cancelar la reservación.")
+            lines.append(f"❌ {msg}")
     elif intent == "register_book":
-        msg = f"Se registró el libro “{book_label()}” correctamente." if success \
-              else "No pudimos registrar el libro. Revisa los datos enviados."
+        if success:
+            lines.append(_header("📚 Libro registrado correctamente."))
+            items = _line_items([
+                f"Título: {_val('title','-')}",
+                f"Autor: {_val('author','-')}",
+                f"ID: {_val('book_id','-')}",
+                f"Creado en: {_val('created_at','-')}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "MISSING_TITLE": "Falta el título del libro."
+            }.get(code, result.get("message") or "No pudimos registrar el libro.")
+            lines.append(f"❌ {msg}")
     elif intent == "register_copy":
-        msg = f"Se registró la copia ({copy_label()}) correctamente." if success \
-              else "No pudimos registrar la copia. Revisa el código de barras y el libro."
-    else:
-        msg = "No entendí tu solicitud. ¿Podrías darme un poco más de contexto?"
-    lines = ["¡Hola! 👋", ""]
-    lines.append(msg)
-    if intent == "reserve" and success:
-        if detail.get("due_date"):
-            lines.append(f"Fecha de vencimiento de la reserva: {detail['due_date']}.")
-    if intent == "list_books" and success:
-        items = (result.get("data") or {}).get("items") or []
-        if items:
+        if success:
+            lines.append(_header("🧾 Copia registrada correctamente."))
+            items = _line_items([
+                f"Libro: {_val('title','-')} (ID: {_val('book_id','-')})",
+                f"Copia (barcode): {_val('barcode','-')}",
+                f"Ubicación: {_val('location','-')}",
+                f"ID de copia: {_val('copy_id','-')}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "MISSING_FIELDS": "Faltan book_id, barcode o location.",
+                "BOOK_NOT_FOUND": "El libro indicado no existe.",
+                "BARCODE_EXISTS": "El código de barras ya existe."
+            }.get(code, result.get("message") or "No pudimos registrar la copia.")
+            lines.append(f"❌ {msg}")
+    elif intent == "list_books":
+        if success:
+            items = (data.get("items") or [])
             total = sum(i.get("copies_total", 0) for i in items)
             disp = sum(i.get("copies_available", 0) for i in items)
-            lines.append(f"Libros en catálogo: {len(items)} · Copias totales: {total} · Disponibles ahora: {disp}.")
+            lines.append(_header("📖 Listado de libros (primeros 10):"))
+            for idx, it in enumerate(items[:10], start=1):
+                title = it.get("title") or "-"
+                author = it.get("author") or "-"
+                bid = it.get("book_id") or "-"
+                ct = it.get("copies_total", 0)
+                ca = it.get("copies_available", 0)
+                lines.append(f"{idx}) {title} — {author} | Copias: {ca}/{ct} (ID: {bid})")
+            lines.append("")
+            lines.append(f"Resumen: Libros: {len(items)} · Copias totales: {total} · Disponibles: {disp}.")
+        else:
+            lines.append("❌ No fue posible obtener el listado en este momento.")
+    elif intent == "delete_book":
+        if success:
+            lines.append(_header("🧹 Libro eliminado."))
+            items = _line_items([
+                f"Título: {_val('title','-')}",
+                f"ID: {_val('book_id','-')}",
+                f"Copias eliminadas: {_val('removed_copies',0)}",
+                f"Reservaciones eliminadas: {_val('removed_reservations',0)}",
+            ])
+            lines += items
+        else:
+            msg = {
+                "MISSING_ID_OR_TITLE": "Debes indicar el id o el título del libro.",
+                "BOOK_NOT_FOUND": "No encontré el libro solicitado."
+            }.get(code, result.get("message") or "No pudimos eliminar el libro.")
+            lines.append(f"❌ {msg}")
+    else:
+        lines.append("🤖 No entendí tu solicitud. ¿Podrías darme un poco más de contexto?")
     lines.append("")
     lines.append(f"(Procesado: {processed_at_iso}Z)")
     return "\n".join(lines)
@@ -121,6 +209,12 @@ async def run_poller():
                                 result = await renew(session, barcode=params.get("barcode"), email=params.get("email") or from_email)
                             elif intent == "cancel":
                                 result = await cancel(session, barcode=params.get("barcode"), email=params.get("email") or from_email)
+                            elif intent == "delete_book":
+                                result = await delete_book(
+                                    session,
+                                    book_id=params.get("book_id"),
+                                    book_title=params.get("book_title"),
+                                )
                             else:
                                 result = {"ok": False, "message": f"No entendí la solicitud. ({intent_data.get('reason','sin razón')})", "code": "UNKNOWN_INTENT"}
                         except Exception as action_ex:
