@@ -16,7 +16,7 @@ class Settings:
     PORT: int = int(os.getenv("PORT", "8000"))
 
     # DB 
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./library.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
 
     # Microsoft Graph
     GRAPH_TENANT_ID: str | None = os.getenv("GRAPH_TENANT_ID")
